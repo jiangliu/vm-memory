@@ -404,6 +404,8 @@ pub trait GuestMemoryBackendMT<'a> {
 /// ```
 /// # #[cfg(feature = "backend-mmap")]
 /// # use vm_memory::GuestMemoryMmap;
+/// # #[cfg(feature = "backend-atomic")]
+/// # use vm_memory::GuestMemoryAtomic;
 /// # use vm_memory::{GuestAddress, GuestMemory, GuestMemoryBackendMT,
 /// #                 GuestAddressSpace};
 ///
@@ -437,6 +439,24 @@ pub trait GuestMemoryBackendMT<'a> {
 ///     VirtioDevice::new();
 /// let mmap = get_mmap();
 /// for_immutable_mmap.activate(&mmap);
+/// # }
+///
+/// # #[cfg(all(feature = "backend-mmap", feature = "backend-atomic"))]
+/// # fn test_2() {
+/// // Using `VirtioDevice` with a mutable GuestMemoryMmap:
+/// struct MutableMmap;
+/// impl GuestMemoryBackendMT<'_> for MutableMmap {
+///   type Memory = GuestMemoryMmap;
+///   type AddressSpace = GuestMemoryAtomic<GuestMemoryMmap>;
+/// }
+/// let mut for_mutable_mmap: VirtioDevice<MutableMmap> =
+///     VirtioDevice::new();
+/// let atomic = GuestMemoryAtomic::new(get_mmap());
+/// for_mutable_mmap.activate(atomic.clone());
+/// let mut another: VirtioDevice<MutableMmap> =
+///     VirtioDevice::new();
+/// another.activate(atomic.clone());
+/// // atomic can be modified here...
 /// # }
 /// ```
 
