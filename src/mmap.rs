@@ -22,7 +22,8 @@ use std::sync::Arc;
 
 use crate::address::Address;
 use crate::guest_memory::{
-    self, FileOffset, GuestAddress, GuestMemory, GuestMemoryRegion, GuestUsize, MemoryRegionAddress,
+    self, FileOffset, GuestAddress, GuestMemory, GuestMemoryMut, GuestMemoryRegion, GuestUsize,
+    MemoryRegionAddress,
 };
 use crate::volatile_memory::VolatileMemory;
 use crate::Bytes;
@@ -465,22 +466,8 @@ impl GuestMemoryMmap {
     }
 }
 
-impl GuestMemory for GuestMemoryMmap {
+impl GuestMemoryMut for GuestMemoryMmap {
     type R = GuestRegionMmap;
-
-    fn num_regions(&self) -> usize {
-        self.regions.len()
-    }
-
-    fn find_region(&self, addr: GuestAddress) -> Option<&GuestRegionMmap> {
-        let index = match self.regions.binary_search_by_key(&addr, |x| x.start_addr()) {
-            Ok(x) => Some(x),
-            // Within the closest region with starting address < addr
-            Err(x) if (x > 0 && addr <= self.regions[x - 1].last_addr()) => Some(x - 1),
-            _ => None,
-        };
-        index.map(|x| self.regions[x].as_ref())
-    }
 
     fn with_regions<F, E>(&self, cb: F) -> result::Result<(), E>
     where
@@ -512,6 +499,22 @@ impl GuestMemory for GuestMemoryMmap {
             .enumerate()
             .map(|(idx, region)| mapf((idx, region.as_ref())))
             .fold(init, foldf)
+    }
+}
+
+impl GuestMemory for GuestMemoryMmap {
+    fn num_regions(&self) -> usize {
+        self.regions.len()
+    }
+
+    fn find_region(&self, addr: GuestAddress) -> Option<&GuestRegionMmap> {
+        let index = match self.regions.binary_search_by_key(&addr, |x| x.start_addr()) {
+            Ok(x) => Some(x),
+            // Within the closest region with starting address < addr
+            Err(x) if (x > 0 && addr <= self.regions[x - 1].last_addr()) => Some(x - 1),
+            _ => None,
+        };
+        index.map(|x| self.regions[x].as_ref())
     }
 }
 

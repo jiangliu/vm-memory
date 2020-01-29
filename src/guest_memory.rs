@@ -21,11 +21,14 @@
 //! - [MemoryRegionAddress](struct.MemoryRegionAddress.html): represents an offset inside a region.
 //! - [GuestMemoryRegion](trait.GuestMemoryRegion.html): represent a continuous region of guest's
 //! physical memory.
-//! - [GuestMemory](trait.GuestMemory.html): represent a collection of GuestMemoryRegion objects.
+//! - [GuestMemory](trait.GuestMemory.html): represent an immutable collection of GuestMemoryRegion objects.
 //! The main responsibilities of the GuestMemory trait are:
 //!     - hide the detail of accessing guest's physical address.
 //!     - map a request address to a GuestMemoryRegion object and relay the request to it.
 //!     - handle cases where an access request spanning two or more GuestMemoryRegion objects.
+//!
+//! Whenever a collection of GuestMemoryRegion objects is mutable,
+//! [GuestMemoryMut](trait.GuestMemoryMut.html) should be implemented instead.
 
 use std::convert::From;
 use std::fmt::{self, Display};
@@ -242,22 +245,10 @@ pub trait GuestMemoryRegion: Bytes<MemoryRegionAddress, E = Error> {
 }
 
 /// Represents a container for a collection of GuestMemoryRegion objects.
-///
-/// The main responsibilities of the GuestMemory trait are:
-/// - hide the detail of accessing guest's physical address.
-/// - map a request address to a GuestMemoryRegion object and relay the request to it.
-/// - handle cases where an access request spanning two or more GuestMemoryRegion objects.
-///
-/// Note: the regions inside a [`GuestMemory`](trait.GuestMemory.html) object must not overlap.
-pub trait GuestMemory {
+/// All regions in a GuestMemoryMut object must not intersect with each other.
+pub trait GuestMemoryMut {
     /// Type of objects hosted by the address space.
     type R: GuestMemoryRegion;
-
-    /// Returns the number of regions in the collection.
-    fn num_regions(&self) -> usize;
-
-    /// Returns the region containing the specified address or `None`.
-    fn find_region(&self, addr: GuestAddress) -> Option<&Self::R>;
 
     /// Perform the specified action on each region.
     ///
@@ -291,7 +282,7 @@ pub trait GuestMemory {
     ///
     /// ```
     /// # #[cfg(feature = "backend-mmap")]
-    /// # use vm_memory::{GuestAddress, GuestMemory, GuestMemoryRegion, GuestMemoryMmap};
+    /// # use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMut, GuestMemoryRegion, GuestMemoryMmap};
     ///
     /// # #[cfg(feature = "backend-mmap")]
     /// # fn test_map_fold() -> Result<(), ()> {
@@ -323,7 +314,7 @@ pub trait GuestMemory {
     ///
     /// ```
     /// # #[cfg(feature = "backend-mmap")]
-    /// # use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
+    /// # use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMut, GuestMemoryMmap};
     ///
     /// # #[cfg(feature = "backend-mmap")]
     /// # fn test_last_addr() -> Result<(), ()> {
@@ -343,6 +334,24 @@ pub trait GuestMemory {
             std::cmp::max,
         )
     }
+}
+
+/// Like GuestMemoryMut, GuestMemory represents a container for a collection of
+/// GuestMemoryRegion objects.  However, GuestMemory represents an *immutable*
+/// collection; interior mutability is not allowed for implementations of
+/// GuestMemory.  Because of this, GuestMemory always has a consistent view of
+/// the memory map, and provides the `Bytes<GuestAddress>` trait to hide
+/// the details of accessing guest memory by physical address.
+///
+/// The task of the GuestMemory trait are:
+/// - map a request address to a GuestMemoryRegion object and relay the request to it.
+/// - handle cases where an access request spanning two or more GuestMemoryRegion objects.
+pub trait GuestMemory: GuestMemoryMut {
+    /// Returns the number of regions in the collection.
+    fn num_regions(&self) -> usize;
+
+    /// Return the region containing the specified address or None.
+    fn find_region(&self, addr: GuestAddress) -> Option<&Self::R>;
 
     /// Tries to convert an absolute address to a relative address within the corresponding region.
     ///
