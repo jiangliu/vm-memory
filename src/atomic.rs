@@ -76,8 +76,9 @@ impl<M: GuestMemory> GuestMemoryAtomic<M> {
     }
 }
 
-impl<M: GuestMemory> GuestAddressSpace<M> for GuestMemoryAtomic<M> {
+impl<M: GuestMemory> GuestAddressSpace for GuestMemoryAtomic<M> {
     type T = GuestMemoryLoadGuard<M>;
+    type M = M;
 
     fn memory_map(&self) -> Self::T {
         GuestMemoryLoadGuard { guard: self.load() }

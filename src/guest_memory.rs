@@ -340,53 +340,6 @@ pub trait GuestMemoryMut {
     }
 }
 
-/// GuestMemoryBackend is used to pass around the concrete GuestMemory types
-/// that should be used by a backend.  You can define a dummy struct that
-/// implements the trait, so that the GuestMemory clients can refer to the
-/// associated types in GuestMemoryBackend concisely.
-///
-/// ```
-/// # #[cfg(feature = "backend-mmap")]
-/// # use vm_memory::{GuestMemory, GuestMemoryBackend, GuestMemoryMmap};
-/// struct MmapBackend;
-/// # #[cfg(feature = "backend-mmap")]
-/// impl<'a> GuestMemoryBackend<'a> for MmapBackend {
-///     type Memory = GuestMemoryMmap;
-///     type AddressSpace = &'a GuestMemoryMmap;
-/// }
-/// ```
-
-pub trait GuestMemoryBackend<'a> {
-    /// The implementation that will be used to access guest memory.
-    type Memory: GuestMemory;
-
-    /// A type that provides temporary access to the memory map for access purposes.
-    type AddressSpace: 'a + GuestAddressSpace<Self::Memory>;
-}
-
-/// GuestMemoryBackendMT is the same as GuestMemoryBackend, but it is used
-/// when the client needs to access the memory backend from multiple threads.
-/// For this reason the `Self::AddressSpace` associated type is also required to
-/// implement the Send and Sync traits.
-///
-/// ```
-/// # #[cfg(feature = "backend-mmap")]
-/// # use vm_memory::{GuestMemory, GuestMemoryBackendMT, GuestMemoryMmap};
-/// struct MmapBackend;
-/// # #[cfg(feature = "backend-mmap")]
-/// impl<'a> GuestMemoryBackendMT<'a> for MmapBackend {
-///     type Memory = GuestMemoryMmap;
-///     type AddressSpace = &'a GuestMemoryMmap;
-/// }
-/// ```
-pub trait GuestMemoryBackendMT<'a> {
-    /// The implementation that will be used to access guest memory.
-    type Memory: GuestMemory;
-
-    /// A type that provides temporary access to the memory map for access purposes.
-    type AddressSpace: 'a + GuestAddressSpace<Self::Memory> + Send + Sync;
-}
-
 /// GuestAddressSpace provides a way to retrieve a GuestMemory object.
 /// The vm-memory crate already provides trivial implementation for
 /// instances of GuestMemory (more precisely, for references to them
@@ -402,22 +355,22 @@ pub trait GuestMemoryBackendMT<'a> {
 /// to repetitive types such as `VirtioDevice<GuestMemoryMmap, &GuestMemoryMmap>`.
 ///
 /// ```
+/// # use std::sync::Arc;
 /// # #[cfg(feature = "backend-mmap")]
 /// # use vm_memory::GuestMemoryMmap;
 /// # #[cfg(feature = "backend-atomic")]
 /// # use vm_memory::GuestMemoryAtomic;
-/// # use vm_memory::{GuestAddress, GuestMemory, GuestMemoryBackendMT,
-/// #                 GuestAddressSpace};
+/// # use vm_memory::{GuestAddress, GuestMemory, GuestAddressSpace};
 ///
-/// pub struct VirtioDevice<'a, MB: GuestMemoryBackendMT<'a>> {
-///     mem: Option<MB::AddressSpace>,
+/// pub struct VirtioDevice<AS: GuestAddressSpace> {
+///     mem: Option<AS>,
 /// }
 ///
-/// impl<'a, MB: GuestMemoryBackendMT<'a>> VirtioDevice<'a, MB> {
+/// impl<AS: GuestAddressSpace> VirtioDevice<AS> {
 ///     fn new() -> Self {
 ///         VirtioDevice { mem: None }
 ///     }
-///     fn activate(&mut self, mem: MB::AddressSpace) {
+///     fn activate(&mut self, mem: AS) {
 ///         self.mem = Some(mem)
 ///     }
 /// }
@@ -430,39 +383,35 @@ pub trait GuestMemoryBackendMT<'a> {
 /// # #[cfg(feature = "backend-mmap")]
 /// # fn test_1() {
 /// // Using `VirtioDevice` with an immutable GuestMemoryMmap:
-/// struct ImmutableMmap;
-/// impl<'a> GuestMemoryBackendMT<'a> for ImmutableMmap {
-///     type Memory = GuestMemoryMmap;
-///     type AddressSpace = &'a GuestMemoryMmap;
-/// }
-/// let mut for_immutable_mmap: VirtioDevice<ImmutableMmap> =
+/// let mut for_immutable_mmap: VirtioDevice<Arc<GuestMemoryMmap>> =
 ///     VirtioDevice::new();
-/// let mmap = get_mmap();
-/// for_immutable_mmap.activate(&mmap);
+/// let mmap = Arc::new(get_mmap());
+/// for_immutable_mmap.activate(mmap.clone());
+/// let mut another: VirtioDevice<Arc<GuestMemoryMmap>> =
+///     VirtioDevice::new();
+/// another.activate(mmap.clone());
 /// # }
 ///
 /// # #[cfg(all(feature = "backend-mmap", feature = "backend-atomic"))]
 /// # fn test_2() {
 /// // Using `VirtioDevice` with a mutable GuestMemoryMmap:
-/// struct MutableMmap;
-/// impl GuestMemoryBackendMT<'_> for MutableMmap {
-///   type Memory = GuestMemoryMmap;
-///   type AddressSpace = GuestMemoryAtomic<GuestMemoryMmap>;
-/// }
-/// let mut for_mutable_mmap: VirtioDevice<MutableMmap> =
+/// let mut for_mutable_mmap: VirtioDevice<GuestMemoryAtomic<GuestMemoryMmap>> =
 ///     VirtioDevice::new();
 /// let atomic = GuestMemoryAtomic::new(get_mmap());
 /// for_mutable_mmap.activate(atomic.clone());
-/// let mut another: VirtioDevice<MutableMmap> =
+/// let mut another: VirtioDevice<GuestMemoryAtomic<GuestMemoryMmap>> =
 ///     VirtioDevice::new();
 /// another.activate(atomic.clone());
 /// // atomic can be modified here...
 /// # }
 /// ```
 
-pub trait GuestAddressSpace<M: GuestMemory> {
+pub trait GuestAddressSpace {
+    /// Target dereferenced type of Self::T.
+    type M: GuestMemory;
+
     /// The type of the object returned by `memory_map()`.
-    type T: Deref<Target = M>;
+    type T: Deref<Target = Self::M>;
 
     /// Return an object (e.g. a reference or guard) that can be used
     /// to access memory through this address space.  The object provides
@@ -470,24 +419,27 @@ pub trait GuestAddressSpace<M: GuestMemory> {
     fn memory_map(&self) -> Self::T;
 }
 
-impl<M: GuestMemory> GuestAddressSpace<M> for &M {
+impl<M: GuestMemory> GuestAddressSpace for &M {
     type T = Self;
+    type M = M;
 
     fn memory_map(&self) -> Self {
         self
     }
 }
 
-impl<M: GuestMemory> GuestAddressSpace<M> for Rc<M> {
+impl<M: GuestMemory> GuestAddressSpace for Rc<M> {
     type T = Self;
+    type M = M;
 
     fn memory_map(&self) -> Self {
         self.clone()
     }
 }
 
-impl<M: GuestMemory> GuestAddressSpace<M> for Arc<M> {
+impl<M: GuestMemory> GuestAddressSpace for Arc<M> {
     type T = Self;
+    type M = M;
 
     fn memory_map(&self) -> Self {
         self.clone()
